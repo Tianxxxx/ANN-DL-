@@ -1,0 +1,323 @@
+---
+title: "IST707 Regression, ANN/DL"
+author: "Tian Xu"
+date: "April 27, 2019 "
+output: html_document
+---
+  
+>__ANN/DL__
+
+#### Introduction
+ANN/DL is a complex algorithm but usually has good performance with high accuracy. In this part, we'll use Artificial neural network/Deep learning to predict the infulencial aspects to students' performance.
+
+##### Data Processing 
+
+* Import the dataset 
+```{r eval=FALSE}
+csvfile<-"~/Downloads/iSchool/Spring 2019/IST707/HW/HW4/Students' Academic Performance"
+student_perfor<-read.csv("Students' Academic Performance.csv")
+```
+
+* Library the packages 
+```{r eval=FALSE}
+install.packages("CRAN")
+install.packages("tidyverse")
+install.packages("rsample")
+install.packages("recipes")
+install.packages("keras")
+library(tidyverse)
+library(rsample)
+library(recipes)
+library(sqldf)
+library(keras)
+library(arules)
+library(arulesViz)
+```
+
+* Data Preprocessing
+```{r eval=FALSE}
+str(student_perfor)
+summary(student_data)
+sum(is.na(student_perfor)) #No NAs in the dataset
+student_perfor$NationalITy<-NULL
+student_perfor$PlaceofBirth<-NULL
+student_perfor$SectionID<-NULL
+student_perfor$GradeID<-NULL
+#Make dummy variables
+student_perfor$gender <- ifelse(student_perfor$gender != 'M', 1, 0)
+
+#topic:nonscience=1, science=0
+student_perfor$Topic <- ifelse(student_perfor$Topic == 'Arabic'|student_perfor$Topic == 'English'|
+                               student_perfor$Topic == 'Quran'|student_perfor$Topic == 'Spanish'|
+                                student_perfor$Topic == 'French'|student_perfor$Topic == 'History'|
+                                student_perfor$Topic == 'Geology', 1, 0)
+student_perfor$Semester <- ifelse(student_perfor$Semester != 'F', 1, 0)
+student_perfor$Relation <- ifelse(student_perfor$Relation == 'Mum', 1, 0)
+student_perfor$ParentAnsweringSurvey <- ifelse(student_perfor$ParentAnsweringSurvey == 'Yes', 1, 0)
+student_perfor$ParentschoolSatisfaction <- ifelse(student_perfor$ParentschoolSatisfaction == 'Good', 1, 0)
+student_perfor$StudentAbsenceDays <- ifelse(student_perfor$StudentAbsenceDays == 'Above-7', 1, 0)
+```
+
+```{r eval=FALSE}
+student_perfor$StageID<-as.numeric(as.factor(levels(student_perfor$StageID)))
+student_perfor$Class<-as.numeric(as.factor(levels(student_perfor$Class)))
+student_perfor$raisedhands<-as.numeric(student_perfor$raisedhands)
+student_perfor$VisITedResources<-as.numeric(student_perfor$VisITedResources)
+student_perfor$AnnouncementsView<-as.numeric(student_perfor$AnnouncementsView)
+student_perfor$Discussion<-as.numeric(student_perfor$Discussion)
+str(student_perfor)
+
+normalize <-function(x) {
+return ((x - min(x)) / (max(x) - min(x)))
+}
+student_perfor <- as.data.frame(lapply(student_perfor, normalize))
+```
+
+* Split the dataset for training
+```{r eval=FALSE}
+set.seed(100)
+train_test_split<-initial_split(student_perfor, prop=0.8)
+train<-training(train_test_split)
+test<-testing(train_test_split)
+```
+
+* Data Preprocessing for Deeplearning
+```{r eval=FALSE}
+rec_obj <- recipe(Class ~ ., data = train) %>%
+  step_center(all_predictors(),-all_outcomes()) %>%
+  step_scale(all_predictors(),-all_outcomes()) %>%
+  prep(data = train)
+
+rec_obj
+
+# Data Recipe
+# 
+# Inputs:
+# 
+#       role #variables
+#    outcome          1
+#  predictor         12
+# 
+# Training data contained 385 data points and no missing data.
+# 
+# Operations:
+# 
+# Centering for gender, StageID, Topic, Semester, Relation, raisedhands, VisITedResources, AnnouncementsView, ... [trained]
+# Scaling for gender, StageID, Topic, Semester, Relation, raisedhands, VisITedResources, AnnouncementsView, ... [trained]
+
+x_train<-bake(rec_obj, new_data = train) %>% select(-Class)
+x_test<-bake(rec_obj, new_data = test) %>% select(-Class)
+y_train_vec<-ifelse(pull(train, Class)=="Yes", 1, 0)
+y_test_vec<-ifelse(pull(test, Class)=="Yes", 1, 0)
+str(x_train)
+# Classes ‘tbl_df’, ‘tbl’ and 'data.frame':	385 obs. of  12 variables:
+#  $ gender                  : num  -0.763 -0.763 -0.763 -0.763 -0.763 ...
+#  $ StageID                 : num  -1.216 0.016 1.248 -1.216 0.016 ...
+#  $ Topic                   : num  -1.05 -1.05 -1.05 -1.05 -1.05 ...
+#  $ Semester                : num  -0.941 -0.941 -0.941 -0.941 -0.941 ...
+#  $ Relation                : num  -0.811 -0.811 -0.811 -0.811 -0.811 ...
+#  $ raisedhands             : num  -1.006 -0.844 -1.168 -0.521 -0.197 ...
+#  $ VisITedResources        : num  -1.1206 -1.0005 -1.3908 -0.8503 -0.0997 ...
+#  $ AnnouncementsView       : num  -1.31 -1.28 -1.39 -1.2 -0.94 ...
+#  $ Discussion              : num  -0.868 -0.689 -0.51 -0.33 0.208 ...
+#  $ ParentAnsweringSurvey   : num  0.888 0.888 -1.123 -1.123 -1.123 ...
+#  $ ParentschoolSatisfaction: num  0.824 0.824 -1.21 -1.21 -1.21 ...
+#  $ StudentAbsenceDays      : num  -0.82 -0.82 1.22 1.22 1.22 ...
+```
+
+* Deep Learning Model
+```{r eval=FALSE}
+model_keras<-keras_model_sequential()
+model_keras %>%
+  layer_dense(units = 16, kernel_initializer = "uniform", activation = "relu", input_shape = ncol(x_train)) %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 16, kernel_initializer = "uniform", activation = "relu") %>%
+  layer_dropout(rate = 0.1) %>% 
+  layer_dense(units = 1, kernel_initializer = "uniform", activation = "sigmoid") %>%
+  compile(optimizer="adam", loss="binary_crossentropy", metrics=c("accuracy")
+          )
+
+model_keras
+
+# Model
+# _________________________________________________________________________________________________________________________________________
+# Layer (type)                                                 Output Shape                                           Param #              
+# =========================================================================================================================================
+# dense (Dense)                                                (None, 16)                                             208                  
+# _________________________________________________________________________________________________________________________________________
+# dropout (Dropout)                                            (None, 16)                                             0                    
+# _________________________________________________________________________________________________________________________________________
+# dense_1 (Dense)                                              (None, 16)                                             272                  
+# _________________________________________________________________________________________________________________________________________
+# dropout_1 (Dropout)                                          (None, 16)                                             0                    
+# _________________________________________________________________________________________________________________________________________
+# dense_2 (Dense)                                              (None, 1)                                              17                   
+# =========================================================================================================================================
+# Total params: 497
+# Trainable params: 497
+# Non-trainable params: 0
+
+```
+
+* Model Prediction
+```{r eval=FALSE}
+yhat_keras_class_vec<-predict_classes(object = model_keras, x=as.matrix(x_test)) %>%
+  as.vector()
+yhat_keras_prob_vec<-predict_proba(object = model_keras, x=as.matrix(x_test)) %>%
+  as.vector()
+estimates_keras<-tibble(
+  truth=as.factor(y_test_vec) %>% fct_recode(yes="1", no="0"),
+  estimate=as.factor(yhat_keras_class_vec) %>% fct_recode(yes="1", no="0"),
+  class_prob=yhat_keras_prob_vec
+)
+
+estimates_keras
+
+# truth
+# <fctr>
+# estimate
+# <fctr>
+# class_prob
+# <dbl>
+# no	yes	0.5001056		
+# no	yes	0.5000210		
+# no	no	0.4997332		
+# no	no	0.4997532		
+# no	no	0.4994116		
+# no	no	0.4999833		
+# no	no	0.4999909		
+# no	no	0.4999706		
+# no	no	0.4998509		
+# no	yes	0.5000724	
+```
+
+* Model Performance Evaluation
+```{r eval=FALSE}
+install.packages("yardstick")
+library(yardstick)
+library(caret)
+
+options(yardstick.event_first = F)
+estimates_keras %>% table(sort(estimates_keras$truth, estimates_keras$estimate)))
+
+
+```
+
+
+
+>__Association Rules__
+
+I want to use Associations Rules to see which variable has strong relation to learning performance.
+```{r eval=FALSE}
+csvfile<-"~/Downloads/iSchool/Spring 2019/IST707/HW/HW4/Students' Academic Performance"
+student_perfor_a<-read.csv("Students' Academic Performance.csv")
+
+student_perfor_a$NationalITy<-NULL
+student_perfor_a$PlaceofBirth<-NULL
+student_perfor_a$SectionID<-NULL
+student_perfor_a$GradeID<-NULL
+
+str(student_perfor_a)
+summary(student_perfor_a)
+
+#Discretize the columns
+student_perfor_a[[ "raisedhands"]] <- ordered(cut(student_perfor_a[[ "raisedhands"]],
+                                             c(0,15,50,75,100)),
+                                         labels = c("low", "medium", "high", "very_active"))
+
+student_perfor_a[[ "VisITedResources"]] <- ordered(cut(student_perfor_a[[ "VisITedResources"]],
+                                             c(0,20,65,99)),
+                                         labels = c("low", "medium", "high"))
+
+student_perfor_a[[ "AnnouncementsView"]] <- ordered(cut(student_perfor_a[[ "AnnouncementsView"]],
+                                             c(0,14,38,58,98)),
+                                         labels = c("low", "medium", "high", "very high"))
+
+student_perfor_a[[ "Discussion"]] <- ordered(cut(student_perfor_a[[ "Discussion"]],
+                                             c(1,20,43,99)),
+                                         labels = c("low", "medium", "high"))
+
+str(student_perfor_a)
+aDF<-na.omit(student_perfor_a)
+str(aDF)
+
+apriori(student_perfor_a, parameter = NULL, appearance = NULL, control = NULL)
+
+
+```
+
+* Run the model with defaults
+```{r eval=FALSE}
+apriori(student_perfor_a, parameter = NULL, appearance = NULL, control = NULL)
+
+# Apriori
+# 
+# Parameter specification:
+#  confidence minval smax arem  aval originalSupport maxtime support minlen maxlen target   ext
+#         0.8    0.1    1 none FALSE            TRUE       5     0.1      1     10  rules FALSE
+# 
+# Algorithmic control:
+#  filter tree heap memopt load sort verbose
+#     0.1 TRUE TRUE  FALSE TRUE    2    TRUE
+# 
+# Absolute minimum support count: 48 
+# 
+# set item appearances ...[0 item(s)] done [0.00s].
+# set transactions ...[44 item(s), 480 transaction(s)] done [0.00s].
+# sorting and recoding items ... [35 item(s)] done [0.00s].
+# creating transaction tree ... done [0.00s].
+# checking subsets of size 1 2 3 4 5 6 done [0.00s].
+# writing ... [887 rule(s)] done [0.00s].
+# creating S4 object  ... done [0.00s].
+# set of 887 rules 
+
+```
+
+* Run the model against record data
+```{r eval=FALSE}
+
+rules_record<-apriori(student_perfor_a[,sapply(student_perfor_a, is.factor)], parameter = list(support=0.1, confidence=0.5, minlen=3))
+inspect(head(rules_record,5))
+
+#  lhs                                rhs                  support   confidence lift     count
+# [1] {StageID=lowerlevel,Topic=IT}   => {Semester=F}         0.1229167 0.9516129  1.864384 59   
+# [2] {Topic=IT,Semester=F}           => {StageID=lowerlevel} 0.1229167 0.6555556  1.581240 59   
+# [3] {StageID=lowerlevel,Semester=F} => {Topic=IT}           0.1229167 0.5267857  2.661654 59   
+# [4] {StageID=lowerlevel,Topic=IT}   => {Relation=Father}    0.1145833 0.8870968  1.504616 55   
+# [5] {Topic=IT,Relation=Father}      => {StageID=lowerlevel} 0.1145833 0.6707317  1.617845 55 
+```
+
+* Run and visualize the most frequent items
+```{r eval=FALSE}
+frequent_items_a<-eclat(student_perfor_a, parameter = list(support=0.4, minlen=2))
+inspect(head(frequent_items_a,2))
+#  items                                                     support   count
+# [1] {VisITedResources=high,StudentAbsenceDays=Under-7}        0.4041667 194  
+# [2] {ParentAnsweringSurvey=Yes,ParentschoolSatisfaction=Good} 0.4729167 227 
+
+```
+
+* Run the model with Supervised Learning Method
+```{r eval=FALSE}
+rules_a<-apriori(data=student_perfor_a, parameter = list(supp=0.01, conf=0.5), appearance = list(default="lhs", rhs=c("Class=H","Class=L")), control=list(verbose=F))
+
+inspect(head(sort(rules, by="lift", decreasing = T),6))
+
+# lhs                                               rhs       support    confidence lift     count
+# [1] {Topic=Math,AnnouncementsView=low}             => {Class=L} 0.01250000 1          3.779528 6    
+# [2] {Topic=Chemistry,AnnouncementsView=low}        => {Class=L} 0.01041667 1          3.779528 5    
+# [3] {Topic=Chemistry,VisITedResources=low}         => {Class=L} 0.01041667 1          3.779528 5    
+# [4] {Topic=Chemistry,ParentschoolSatisfaction=Bad} => {Class=L} 0.01250000 1          3.779528 6    
+# [5] {Topic=Chemistry,ParentAnsweringSurvey=No}     => {Class=L} 0.01250000 1          3.779528 6    
+# [6] {Topic=Spanish,raisedhands=low}                => {Class=L} 0.01458333 1          3.779528 7 
+
+inspect(head(sort(rules, by="lift", decreasing = F),6))
+# lhs                                  rhs       support    confidence lift     count
+# [1] {Topic=Quran,Semester=S}          => {Class=H} 0.01458333 0.5        1.690141  7   
+# [2] {Topic=Chemistry,Relation=Father} => {Class=H} 0.01250000 0.5        1.690141  6   
+# [3] {Topic=Spanish,Relation=Mum}      => {Class=H} 0.01041667 0.5        1.690141  5   
+# [4] {Topic=Biology,Relation=Father}   => {Class=H} 0.01666667 0.5        1.690141  8   
+# [5] {gender=M,Topic=Biology}          => {Class=H} 0.02083333 0.5        1.690141 10   
+# [6] {StageID=HighSchool,Semester=S}   => {Class=H} 0.01041667 0.5        1.690141  5   
+```
+
